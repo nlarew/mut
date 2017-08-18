@@ -1,9 +1,9 @@
 """
 Usage:
-    mut-convert-redirects -b BASE [-o PATH] <files>
+    mut-convert-redirects -u URL [-o PATH] <files>
 
     -h, --help              List CLI prototype, arguments, and options.
-    -b BASE                 Base URL of the property
+    -u URL                  Base URL of the property
     -o PATH                 Output path
     <files>                 Path to the directory containing html files.
 """
@@ -13,7 +13,9 @@ from typing import List, NamedTuple
 from docopt import docopt
 import yaml
 
-Output = NamedTuple('Output', [('property', str), ('version', str)])
+Output = NamedTuple('Output', [('version', str), (
+    'old_prefix', str), ('new_prefix', str)])
+Rule = NamedTuple('Rule', [('version', str), ('old', str), ('new', str)])
 
 
 def transform_version_rule(rule: str) -> str:
@@ -32,55 +34,56 @@ def transform_version_rule(rule: str) -> str:
         return template.format(version)
 
 
-# def parse_output(output) -> List[Output]:
-#     return []
+def parse_output(output) -> List[Output]:
+    old_prefix = None
+    new_prefix = None
+    if isinstance(output, str):
+        version = transform_version_rule(output)
+    elif isinstance(output, dict):
+        output = list(output.items())[0]
+        if isinstance(output[1], dict):
+            version = transform_version_rule(output[0])
+            output = list(output[1].items())[0]
+        if isinstance(output[1], str):
+            parts = output[0].split('/')
+            if len(parts) - 1 == 0:
+                version = 'raw'
+            else:
+                if re.match(r'(v.*|master)', parts[-1]):
+                    version = transform_version_rule(parts[-1])
+                    del parts[-1]
+                    old_prefix = '/'.join(parts)
+            new_prefix = output[1]
+
+    return Output(version, old_prefix, new_prefix)
 
 
 def convert_file(path: str, base: str) -> List[str]:
     """Convert a giza-style redirect file to a list of mut-style rules."""
     with open(path, 'r') as f:
         redirects = list(yaml.safe_load_all(f))
-
-    result = []
+    bases = [base]
+    rules = []
     for rule in redirects:
         if not rule:
             continue
-
         for output in rule['outputs']:
-            #po = parse_output(output)
-            if isinstance(output, str): # e.g. 'v2.2'
-                version = transform_version_rule(output)
-                base_component = ''
-            elif isinstance(output, dict):
-                output = list(output.items())[0]
-                if isinstance(output[1], dict):  # e.g. 'after-v1.x': {'/ruby-driver[/v2.x]': 'https://docs.mongodb.com/ruby-driver'}
-                    if output[0][0] == '/':
-                        version = 'raw'
-                        base_component = output[0]
-                    else:
-                        version = transform_version_rule(output[0])
-                        base_component = output[1] if isinstance(output[1], str) else list(output[1].keys())[0]
-                elif isinstance(output[1], str):  # Then it is of form: {'': 'https://docs.atlas.mongodb.com'}
-                    version = 'raw'
-                    base_component = output[1]
+            o = parse_output(output)
+            f = o.old_prefix + rule['from'] if o.old_prefix else rule['from']
+            t = o.new_prefix + rule['to'] if o.new_prefix else '${base}' + rule['to']
+            # Assemble Redirects
 
-            # Assemble Redirect
-            if version is 'raw':
-                rule['from'] = '/'.join((base_component.rstrip('/'), rule['from'].lstrip('/')))
-                rule['to'] = '/'.join((base_component.rstrip('/'), rule['to'].lstrip('/')))
-            else:
-                rule['from'] = '/'.join((base_component.rstrip('/'), r'${version}', rule['from'].lstrip('/')))
-                rule['to'] = '/'.join((base_component.rstrip('/'), r'${version}', rule['to'].lstrip('/')))
-
-            result.append('{}: {} -> {}'.format(version, rule['from'], rule['to']))
-
+            rules.append('{}: {} -> {}'.format(o.version, f, t))
+    # Convert bases into definitions in list => '\n'.join them with rules
+    result = '\n'.join(rules)
     return result
 
 
 def main() -> None:
     options = docopt(__doc__)
+    url = options['-u'].rstrip('/')
 
-    result = '\n'.join(convert_file(options['<files>'], options['-b']))
+    result = convert_file(options['<files>'], url)
     if options['-o']:
         with open(options['-o'], 'w') as f:
             f.write(result)
