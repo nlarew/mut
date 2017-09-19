@@ -1,3 +1,8 @@
+name: php-library
+output: php-library-results.txt
+file: php-htaccess.yaml
+base: https://docs.mongodb.com/php-library/
+---
 name: atlas
 output: atlas-results.txt
 file: atlas-htaccess.yaml
